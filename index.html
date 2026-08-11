@@ -1,0 +1,580 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Now Playing</title>
+<style>
+  :root {
+    --glass-bg: rgba(255,255,255,0.06);
+    --glass-border: rgba(255,255,255,0.18);
+    --glass-highlight: rgba(255,255,255,0.35);
+    --text-primary: #f5f6f7;
+    --text-secondary: rgba(235,238,242,0.6);
+    --accent: #ffffff;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    min-height: 100%;
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+  }
+
+  body {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    padding: 40px 16px;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+
+  /* ambient glow behind the card, derived from the artwork */
+  #ambient {
+    position: fixed;
+    inset: -20%;
+    background: radial-gradient(circle at 30% 20%, rgba(255,255,255,0.05), transparent 60%);
+    filter: blur(80px);
+    transition: background 0.8s ease;
+    z-index: 0;
+    pointer-events: none;
+  }
+
+  /* ---------- Gradient background themes ---------- */
+  /* Each theme is its own full-screen layer, stacked and crossfaded via
+     opacity — this lets switching between totally different gradients
+     animate smoothly, which a plain `background` transition can't do. */
+  .bg-layer {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    opacity: 0;
+    transition: opacity 1s ease;
+    pointer-events: none;
+  }
+  .bg-layer.active { opacity: 1; }
+
+  .bg-layer[data-theme="none"] {
+    background: #000;
+  }
+  .bg-layer[data-theme="purple"] {
+    background:
+      radial-gradient(circle at 15% 15%, rgba(139,92,246,0.55), transparent 55%),
+      radial-gradient(circle at 88% 12%, rgba(236,72,153,0.30), transparent 50%),
+      radial-gradient(circle at 50% 90%, rgba(124,58,237,0.45), transparent 60%),
+      #0a0416;
+  }
+  .bg-layer[data-theme="teal"] {
+    background:
+      radial-gradient(circle at 18% 18%, rgba(45,212,191,0.50), transparent 55%),
+      radial-gradient(circle at 85% 20%, rgba(6,182,212,0.35), transparent 50%),
+      radial-gradient(circle at 50% 90%, rgba(13,148,136,0.45), transparent 60%),
+      #030f0d;
+  }
+  .bg-layer[data-theme="orange"] {
+    background:
+      radial-gradient(circle at 18% 18%, rgba(251,146,60,0.55), transparent 55%),
+      radial-gradient(circle at 88% 15%, rgba(245,158,11,0.35), transparent 50%),
+      radial-gradient(circle at 50% 90%, rgba(234,88,12,0.45), transparent 60%),
+      #140a02;
+  }
+  .bg-layer[data-theme="babyblue"] {
+    background:
+      radial-gradient(circle at 18% 18%, rgba(125,211,252,0.55), transparent 55%),
+      radial-gradient(circle at 85% 15%, rgba(56,189,248,0.32), transparent 50%),
+      radial-gradient(circle at 50% 90%, rgba(14,165,233,0.40), transparent 60%),
+      #03101a;
+  }
+
+  /* Theme switcher — small swatch row, fixed to the top */
+  .theme-switcher {
+    position: fixed;
+    top: 22px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 12px;
+    border-radius: 20px;
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.14);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+  }
+  .theme-dot {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    border: 2px solid transparent;
+    padding: 0;
+    cursor: pointer;
+    transition: transform 0.15s ease, border-color 0.15s ease;
+  }
+  .theme-dot:hover { transform: scale(1.12); }
+  .theme-dot.active {
+    border-color: rgba(255,255,255,0.85);
+    transform: scale(1.12);
+  }
+
+  /* ---------- Floating bubbles ---------- */
+  #bubbles {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    overflow: hidden;
+    pointer-events: none;
+  }
+  .bubble {
+    position: absolute;
+    border-radius: 50%;
+    background: radial-gradient(circle at 32% 28%, rgba(255,255,255,0.38), rgba(255,255,255,0.05) 55%, transparent 75%);
+    border: 1px solid rgba(255,255,255,0.10);
+    animation: bubble-float var(--dur, 20s) ease-in-out infinite;
+    animation-delay: var(--delay, 0s);
+    will-change: transform;
+  }
+  @keyframes bubble-float {
+    0%   { transform: translate(0, 0) scale(1); }
+    25%  { transform: translate(var(--dx1, 15px), var(--dy1, -30px)) scale(1.04); }
+    50%  { transform: translate(var(--dx2, -12px), var(--dy2, -55px)) scale(0.97); }
+    75%  { transform: translate(var(--dx3, 10px), var(--dy3, -25px)) scale(1.02); }
+    100% { transform: translate(0, 0) scale(1); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .bubble { animation: none; }
+  }
+
+  .tilt-wrap {
+    position: relative;
+    z-index: 1;
+    width: min(340px, 88vw);
+    border-radius: 44px;
+    will-change: transform;
+  }
+
+  .player {
+    position: relative;
+    width: 100%;
+    padding: 22px 22px 24px;
+    border-radius: 44px;
+    background: var(--glass-bg);
+    backdrop-filter: blur(30px) saturate(160%);
+    -webkit-backdrop-filter: blur(30px) saturate(160%);
+    box-shadow: inset 0 1px 0 var(--glass-highlight);
+    color: var(--text-primary);
+    user-select: none;
+    overflow: hidden;
+    --mx: 50%;
+    --my: 30%;
+  }
+
+  /* specular highlight that tracks the cursor — gives the glass a "gyroscope" sheen */
+  .player .sheen {
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: radial-gradient(circle at var(--mx) var(--my), rgba(255,255,255,0.22), transparent 55%);
+    mix-blend-mode: screen;
+    opacity: 0;
+    transition: opacity 0.35s ease;
+    pointer-events: none;
+    z-index: 5;
+  }
+  .tilt-wrap.tilting .sheen { opacity: 1; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .tilt-wrap { transform: none !important; }
+    .player .sheen { display: none; }
+  }
+
+  /* top glossy sheen */
+  .player::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 50%;
+    border-radius: 44px 44px 100% 100% / 44px 44px 60px 60px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.10), rgba(255,255,255,0) 70%);
+    pointer-events: none;
+  }
+
+  /* ARTWORK — auto-synced with the current track, no upload */
+  .artwork-wrap {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    border-radius: 26px;
+    overflow: hidden;
+    background: linear-gradient(135deg, #1c1c1e, #050505);
+    border: 1px solid rgba(255,255,255,0.08);
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.08);
+  }
+
+  .artwork-wrap img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    opacity: 0;
+    transition: opacity 0.35s ease;
+  }
+  .artwork-wrap img.loaded { opacity: 1; }
+
+  .artwork-fallback {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: rgba(255,255,255,0.2);
+  }
+  .artwork-fallback svg { width: 40px; height: 40px; }
+  .artwork-wrap img.loaded + .artwork-fallback { display: none; }
+
+  /* METADATA */
+  .meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-top: 18px;
+  }
+
+  .meta-text { min-width: 0; flex: 1; }
+
+  .track-title {
+    font-size: 17px;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+    text-transform: uppercase;
+    background: transparent;
+    border: none;
+    color: var(--text-primary);
+    width: 100%;
+    padding: 0;
+    outline: none;
+    font-family: inherit;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .track-title::placeholder { color: rgba(255,255,255,0.28); text-transform: none; letter-spacing: 0; font-weight: 600; }
+
+  .track-artist {
+    margin-top: 4px;
+    font-size: 15px;
+    font-weight: 400;
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    width: 100%;
+    padding: 0;
+    outline: none;
+    font-family: inherit;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .track-artist::placeholder { color: rgba(255,255,255,0.22); }
+
+  .airplay-icon {
+    flex-shrink: 0;
+    width: 22px;
+    height: 22px;
+    margin-left: 10px;
+    margin-top: 3px;
+    color: rgba(255,255,255,0.65);
+    cursor: pointer;
+  }
+
+  /* SCRUBBER */
+  .scrubber { margin-top: 16px; }
+
+  .scrub-track {
+    position: relative;
+    width: 100%;
+    height: 4px;
+    border-radius: 3px;
+    background: rgba(255,255,255,0.18);
+    cursor: pointer;
+  }
+  .scrub-fill {
+    position: absolute;
+    top: 0; left: 0; bottom: 0;
+    width: 30%;
+    border-radius: 3px;
+    background: #f2f2f2;
+  }
+  .scrub-knob {
+    position: absolute;
+    top: 50%;
+    left: 30%;
+    width: 12px; height: 12px;
+    background: #fff;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    box-shadow: 0 1px 4px rgba(0,0,0,0.5);
+    opacity: 0;
+    transition: opacity 0.15s ease;
+  }
+  .scrub-track:hover .scrub-knob { opacity: 1; }
+
+  .time-row {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 7px;
+    font-size: 12.5px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-secondary);
+    font-weight: 500;
+  }
+
+  /* TRANSPORT CONTROLS */
+  .controls {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 6px;
+    padding: 0 6px;
+  }
+
+  .ctrl-btn {
+    background: none;
+    border: none;
+    color: var(--text-primary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 10px;
+    border-radius: 50%;
+    transition: transform 0.12s ease, opacity 0.12s ease;
+  }
+  .ctrl-btn:active { transform: scale(0.88); opacity: 0.7; }
+  .ctrl-btn svg { width: 22px; height: 22px; }
+  .ctrl-btn.play svg { width: 34px; height: 34px; }
+
+  /* VOLUME */
+  .volume-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 22px;
+  }
+
+  .vol-icon { flex-shrink: 0; color: rgba(255,255,255,0.55); width: 15px; height: 15px; }
+  .vol-icon.loud { width: 18px; height: 18px; }
+
+  .vol-track {
+    position: relative;
+    flex: 1;
+    height: 4px;
+    border-radius: 3px;
+    background: rgba(255,255,255,0.18);
+    cursor: pointer;
+  }
+  .vol-fill {
+    position: absolute;
+    top: 0; left: 0; bottom: 0;
+    width: 70%;
+    border-radius: 3px;
+    background: rgba(235,235,240,0.85);
+  }
+  .vol-knob {
+    position: absolute;
+    top: 50%;
+    left: 70%;
+    width: 12px; height: 12px;
+    background: #fff;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    box-shadow: 0 1px 4px rgba(0,0,0,0.5);
+    opacity: 0;
+    transition: opacity 0.15s ease;
+  }
+  .vol-track:hover .vol-knob { opacity: 1; }
+
+  /* STATUS / DEVICE PILLS */
+  .status-pill,
+  .device-pill {
+    margin: 18px auto 0;
+    width: fit-content;
+    max-width: 280px;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 9px 16px;
+    border-radius: 20px;
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.12);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-primary);
+  }
+  .status-pill span,
+  .device-pill span {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .device-pill { cursor: pointer; }
+  .device-pill svg { width: 14px; height: 14px; opacity: 0.8; flex-shrink: 0; }
+
+  /* Controls disabled until a track is loaded */
+  .controls.no-track .ctrl-btn,
+  .scrubber.no-track .scrub-track,
+  .volume-row.no-track .vol-track {
+    opacity: 0.4;
+    pointer-events: none;
+  }
+
+  /* Tap-to-enable prompt for the spatial tilt on iOS (motion access needs a real tap) */
+  .tilt-permission-btn {
+    position: fixed;
+    left: 50%;
+    bottom: 28px;
+    transform: translateX(-50%);
+    z-index: 10;
+    display: none;
+    align-items: center;
+    gap: 7px;
+    padding: 10px 18px;
+    border-radius: 20px;
+    background: rgba(255,255,255,0.12);
+    border: 1px solid rgba(255,255,255,0.18);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    color: #fff;
+    font-size: 13px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+  }
+  .tilt-permission-btn.show { display: flex; }
+  .tilt-permission-btn svg { width: 15px; height: 15px; opacity: 0.9; }
+
+  ::selection { background: rgba(255,255,255,0.25); }
+</style>
+</head>
+<body>
+
+<div class="bg-layer active" data-theme="none"></div>
+<div class="bg-layer" data-theme="purple"></div>
+<div class="bg-layer" data-theme="teal"></div>
+<div class="bg-layer" data-theme="orange"></div>
+<div class="bg-layer" data-theme="babyblue"></div>
+
+<div class="theme-switcher" id="themeSwitcher"></div>
+
+<div id="bubbles"></div>
+
+<div id="ambient"></div>
+
+<div class="tilt-wrap" id="player">
+<div class="player">
+
+  <div class="sheen"></div>
+
+  <!-- Artwork — set automatically from the playlist, no upload -->
+  <div class="artwork-wrap" id="artworkWrap">
+    <img id="artworkImg" alt="Album artwork">
+    <div class="artwork-fallback">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+        <rect x="3" y="3" width="18" height="18" rx="4"/>
+        <circle cx="8.5" cy="9.5" r="1.5"/>
+        <path d="M21 15l-5-5-9 9"/>
+      </svg>
+    </div>
+  </div>
+
+  <!-- Metadata -->
+  <div class="meta">
+    <div class="meta-text">
+      <input class="track-title" id="trackTitle" type="text" placeholder="Song Title" maxlength="40" readonly>
+      <input class="track-artist" id="trackArtist" type="text" placeholder="Artist Name" maxlength="40" readonly>
+    </div>
+    <svg class="airplay-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+      <path d="M5 17H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-1"/>
+      <polygon points="12 15 17 21 7 21 12 15"/>
+    </svg>
+  </div>
+
+  <!-- Scrubber -->
+  <div class="scrubber no-track" id="scrubber">
+    <div class="scrub-track" id="scrubTrack">
+      <div class="scrub-fill" id="scrubFill"></div>
+      <div class="scrub-knob" id="scrubKnob"></div>
+    </div>
+    <div class="time-row">
+      <span id="timeElapsed">0:00</span>
+      <span id="timeRemaining">−0:00</span>
+    </div>
+  </div>
+
+  <!-- Transport -->
+  <div class="controls no-track" id="controls">
+    <button class="ctrl-btn" id="prevBtn" aria-label="Previous">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zM20 6L9 12l11 6z"/></svg>
+    </button>
+    <button class="ctrl-btn play" id="playBtn" aria-label="Play">
+      <svg id="playIcon" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+    </button>
+    <button class="ctrl-btn" id="nextBtn" aria-label="Next">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 6h2v12h-2zM4 6l11 6-11 6z"/></svg>
+    </button>
+  </div>
+
+  <!-- Volume -->
+  <div class="volume-row">
+    <svg class="vol-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M4 9v6h4l5 5V4L8 9H4z"/></svg>
+    <div class="vol-track" id="volTrack">
+      <div class="vol-fill" id="volFill"></div>
+      <div class="vol-knob" id="volKnob"></div>
+    </div>
+    <svg class="vol-icon loud" viewBox="0 0 24 24" fill="currentColor"><path d="M4 9v6h4l5 5V4L8 9H4zm11.5 3a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4z"/></svg>
+  </div>
+
+  <!-- Status (shows loading / errors — no interaction needed) -->
+  <div class="status-pill">
+    <span id="songFileName">Loading…</span>
+  </div>
+
+  <!-- Device pill -->
+  <div class="device-pill">
+    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2v20l5-5-5-5 5-5-5-5z"/></svg>
+    <span id="deviceName">Device Name</span>
+  </div>
+
+  <!-- Real audio element — driven entirely by audio-player.js -->
+  <audio id="audioEl" preload="metadata"></audio>
+
+</div>
+</div>
+
+<!-- Shown only on devices (iOS) that require an explicit tap to grant motion/gyroscope access -->
+<button class="tilt-permission-btn" id="tiltPermissionBtn">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+    <rect x="5" y="2" width="14" height="20" rx="3"/>
+    <path d="M9 18h6"/>
+  </svg>
+  Enable tilt effect
+</button>
+
+<!-- All playback + artwork syncing lives in this file -->
+<script src="audio-player.js"></script>
+
+<!-- Mouse-tilt / gyroscope spatial effect lives in this file -->
+<script src="tilt-effect.js"></script>
+
+<!-- Gradient background theme switcher lives in this file -->
+<script src="background-themes.js"></script>
+
+<!-- Floating translucent bubbles live in this file -->
+<script src="floating-bubbles.js"></script>
+
+</body>
+</html>
