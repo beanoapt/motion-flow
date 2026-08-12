@@ -18,7 +18,7 @@
 
   if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
 
-  const MAX_TILT_DEG   = 10;     // how far the card rotates at full extent
+  const MAX_TILT_DEG   = 25;     // how far the card rotates at full extent
   const MAX_LIFT_SCALE = 1.015; // slight pop toward the viewer while active
   const EASE           = 0.09;  // lower = smoother/laggier, higher = snappier
 
